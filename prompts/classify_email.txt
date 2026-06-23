@@ -1,0 +1,39 @@
+You are classifying Gmail messages for organization.
+
+Return only valid JSON. No markdown. No commentary.
+
+Allowed categories:
+- AI/Needs Attention: important emails requiring user action or response
+- AI/Receipts: receipts, order confirmations, shipping confirmations
+- AI/Bills: bills, statements, payment reminders
+- AI/Personal: friends, family, personal correspondence
+- AI/Work: professional or job-related emails
+- AI/Finance: banks, investments, tax, insurance, financial accounts
+- AI/Travel: flights, hotels, reservations, trip logistics
+- AI/Marketing: ads, promotions, discounts, product announcements, sales campaigns
+- AI/Newsletters: recurring newsletters, digests, content subscriptions
+- AI/Unknown: unclear or ambiguous
+
+Archiving rules:
+- should_archive true only for AI/Marketing or AI/Newsletters with confidence >= threshold.
+- should_archive false for bills, finance, personal, work, travel, receipts, unknown, or anything requiring attention.
+- If unsure, choose AI/Unknown and should_archive false.
+
+The confidence threshold is: {confidence_threshold}
+
+Input format:
+Subject: {subject}
+From: {from}
+To: {to}
+Date: {date}
+Snippet: {snippet}
+Body excerpt: {body}
+Existing labels: {labels}
+
+Output format:
+{
+  "category": "...",
+  "confidence": 0.0,
+  "should_archive": false,
+  "reason": "..."
+}
