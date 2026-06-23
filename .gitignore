@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Gmail organizer secrets and local state
+credentials.json
+token.json
+config.yaml
+state.db

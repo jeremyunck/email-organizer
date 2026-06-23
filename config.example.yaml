@@ -1,0 +1,32 @@
+gmail:
+  credentials_file: credentials.json
+  token_file: token.json
+  default_query: "in:inbox -label:AI/Processed newer_than:7d"
+
+ollama:
+  base_url: "http://localhost:11434"
+  model: "llama3.1:8b"
+  timeout_seconds: 60
+
+classification:
+  confidence_threshold: 0.75
+  body_excerpt_chars: 4000
+  protected_domains:
+    - "irs.gov"
+    - "google.com"
+    - "github.com"
+    - "openai.com"
+
+labels:
+  processed: "AI/Processed"
+  categories:
+    - "AI/Needs Attention"
+    - "AI/Receipts"
+    - "AI/Bills"
+    - "AI/Personal"
+    - "AI/Work"
+    - "AI/Finance"
+    - "AI/Travel"
+    - "AI/Marketing"
+    - "AI/Newsletters"
+    - "AI/Unknown"
