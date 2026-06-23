@@ -39,6 +39,36 @@ Ollama.
 
 ## Setup
 
+### Quick start (interactive script)
+
+The fastest way to get going is the interactive setup script, which walks you
+through every piece the tool needs and tells you what's still missing:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python scripts/setup.py
+```
+
+It will, step by step:
+
+1. Check your Python version (3.11+).
+2. Offer to install the Python dependencies.
+3. Create `config.yaml` from the example, prompting for the Ollama model and
+   base URL.
+4. Check for the Gmail OAuth `credentials.json` and, if it's missing, print
+   exactly how to create one.
+5. Verify Ollama is reachable and offer to `ollama pull` the model.
+6. Run the one-time Gmail OAuth flow to create `token.json`.
+
+Every step is optional and safe to skip — the script never deletes anything,
+and you can re-run it any time to pick up where you left off (for example,
+after you've downloaded `credentials.json`).
+
+### Manual setup
+
+If you'd rather do it by hand:
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate
@@ -160,4 +190,7 @@ label_manager.py    # ensure/create/resolve labels
 state.py            # SQLite tracking of processed message IDs
 prompts/
   classify_email.txt
+scripts/
+  setup.py          # interactive first-time setup
+  verify.sh         # compile + config sanity checks
 ```
