@@ -5,7 +5,8 @@ Walks you through everything the tool needs before its first run:
 
   1. Python version check.
   2. Installing Python dependencies (optionally into a virtualenv).
-  3. Creating ``config.yaml`` from the example (with a couple of prompts).
+  3. Viewing, editing, and saving ``config.yaml`` (model, Ollama base URL,
+     and the agent request timeout), with the current values shown.
   4. Locating the Gmail OAuth ``credentials.json`` file.
   5. Checking that Ollama is reachable and the configured model is pulled.
   6. Running the one-time Gmail OAuth flow to create ``token.json``.
@@ -22,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -38,6 +40,9 @@ DEFAULT_CREDENTIALS = "credentials.json"
 DEFAULT_TOKEN = "token.json"
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
 DEFAULT_MODEL = "llama3.1:8b"
+DEFAULT_TIMEOUT = 60
+# Default max messages processed per run; mirrors main.py's --limit default.
+DEFAULT_LIMIT = 20
 
 MIN_PYTHON = (3, 11)
 
@@ -83,6 +88,21 @@ def confirm(prompt: str, default: bool = True) -> bool:
     if not answer:
         return default
     return answer in ("y", "yes")
+
+
+def ask_int(prompt: str, default: int) -> int:
+    """Prompt for a positive integer, re-asking until one is given."""
+    while True:
+        raw = ask(prompt, str(default))
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            warn("Please enter a whole number.")
+            continue
+        if value <= 0:
+            warn("Please enter a positive number.")
+            continue
+        return value
 
 
 # --- steps -----------------------------------------------------------------
@@ -131,49 +151,114 @@ def install_dependencies() -> None:
 
 
 def create_config() -> dict:
-    """Create config.yaml if needed and return the effective settings.
+    """Show, edit, and save the configuration (config.yaml).
 
-    Returns a dict with at least ``ollama_url`` and ``model`` so later steps
-    can check Ollama, even if config.yaml already existed.
+    Displays the current value of each setting, lets you edit the editable
+    ones (model, Ollama base URL, and the agent request timeout), and saves
+    the result back to ``config.yaml`` on confirmation. Works whether or not
+    ``config.yaml`` already exists.
+
+    Returns a dict with at least ``ollama_url``, ``model``, and
+    ``timeout_seconds`` so later steps can check Ollama.
     """
     banner("3. Configuration (config.yaml)")
     config_path = os.path.join(PROJECT_ROOT, CONFIG_FILE)
     example_path = os.path.join(PROJECT_ROOT, CONFIG_EXAMPLE)
 
-    settings = {"ollama_url": DEFAULT_OLLAMA_URL, "model": DEFAULT_MODEL}
+    exists = os.path.exists(config_path)
+    source_path = config_path if exists else example_path
 
-    if os.path.exists(config_path):
-        ok(f"{CONFIG_FILE} already exists; leaving it untouched.")
-        settings.update(_read_ollama_settings(config_path))
-        return settings
-
-    if not os.path.exists(example_path):
+    if not os.path.exists(source_path):
         warn(f"{CONFIG_EXAMPLE} is missing; cannot create {CONFIG_FILE}.")
+        return {
+            "ollama_url": DEFAULT_OLLAMA_URL,
+            "model": DEFAULT_MODEL,
+            "timeout_seconds": DEFAULT_TIMEOUT,
+        }
+
+    settings = _read_settings(source_path)
+    if exists:
+        ok(f"{CONFIG_FILE} already exists.")
+    else:
+        info(f"No {CONFIG_FILE} yet; it will be created from {CONFIG_EXAMPLE}.")
+    _show_current_settings(settings)
+
+    if exists and not confirm("Edit these settings now?", default=False):
+        info("Leaving config.yaml unchanged.")
         return settings
 
-    info("Let's create config.yaml. Press Enter to accept the defaults.")
-    model = ask("Ollama model name", DEFAULT_MODEL)
-    base_url = ask("Ollama base URL", DEFAULT_OLLAMA_URL)
+    info("Press Enter to keep the current value shown in brackets.")
+    model = ask("Ollama model name", str(settings.get("model", DEFAULT_MODEL)))
+    base_url = ask(
+        "Ollama base URL", str(settings.get("ollama_url", DEFAULT_OLLAMA_URL))
+    )
+    timeout = ask_int(
+        "Agent request timeout (seconds)",
+        int(settings.get("timeout_seconds", DEFAULT_TIMEOUT)),
+    )
 
-    with open(example_path, "r", encoding="utf-8") as handle:
+    # The "save button": nothing is written unless you confirm here.
+    if not confirm("Save these settings to config.yaml?", default=True):
+        info("Discarded changes; config.yaml not written.")
+        return settings
+
+    with open(source_path, "r", encoding="utf-8") as handle:
         text = handle.read()
 
-    text = text.replace(f'model: "{DEFAULT_MODEL}"', f'model: "{model}"')
-    text = text.replace(
-        f'base_url: "{DEFAULT_OLLAMA_URL}"', f'base_url: "{base_url}"'
-    )
+    text, _ = _set_scalar(text, "model", model, quote=True)
+    text, _ = _set_scalar(text, "base_url", base_url, quote=True)
+    text, set_timeout = _set_scalar(text, "timeout_seconds", timeout)
+    if not set_timeout:
+        text = _insert_timeout(text, timeout)
 
     with open(config_path, "w", encoding="utf-8") as handle:
         handle.write(text)
 
-    ok(f"Wrote {CONFIG_FILE} (model={model}, base_url={base_url}).")
-    settings.update({"ollama_url": base_url, "model": model})
+    ok(
+        f"Saved {CONFIG_FILE} (model={model}, base_url={base_url}, "
+        f"timeout_seconds={timeout})."
+    )
+    settings.update(
+        {"ollama_url": base_url, "model": model, "timeout_seconds": timeout}
+    )
     return settings
 
 
-def _read_ollama_settings(config_path: str) -> dict:
-    """Best-effort read of the Ollama url/model from an existing config."""
-    settings: dict = {}
+def _show_current_settings(settings: dict) -> None:
+    """Print the current value of each setting so the user can see them."""
+    info("Current settings:")
+    info(f"    Ollama model              : {settings.get('model', DEFAULT_MODEL)}")
+    info(
+        "    Ollama base URL           : "
+        f"{settings.get('ollama_url', DEFAULT_OLLAMA_URL)}"
+    )
+    info(
+        "    Agent request timeout (s) : "
+        f"{settings.get('timeout_seconds', DEFAULT_TIMEOUT)}"
+    )
+    if "confidence_threshold" in settings:
+        info(
+            "    Confidence threshold      : "
+            f"{settings['confidence_threshold']}"
+        )
+    if "body_excerpt_chars" in settings:
+        info(
+            "    Body excerpt chars (max)  : "
+            f"{settings['body_excerpt_chars']}"
+        )
+    info(
+        f"    Max messages per run      : {DEFAULT_LIMIT} "
+        "(override at runtime with --limit)"
+    )
+
+
+def _read_settings(config_path: str) -> dict:
+    """Best-effort read of the current settings from a config file."""
+    settings: dict = {
+        "ollama_url": DEFAULT_OLLAMA_URL,
+        "model": DEFAULT_MODEL,
+        "timeout_seconds": DEFAULT_TIMEOUT,
+    }
     try:
         import yaml  # type: ignore
     except ImportError:
@@ -181,14 +266,51 @@ def _read_ollama_settings(config_path: str) -> dict:
     try:
         with open(config_path, "r", encoding="utf-8") as handle:
             data = yaml.safe_load(handle) or {}
-        ollama = data.get("ollama", {})
-        if ollama.get("base_url"):
-            settings["ollama_url"] = ollama["base_url"]
-        if ollama.get("model"):
-            settings["model"] = ollama["model"]
     except Exception:
-        pass
+        return settings
+
+    ollama = data.get("ollama", {}) or {}
+    classification = data.get("classification", {}) or {}
+    if ollama.get("base_url"):
+        settings["ollama_url"] = ollama["base_url"]
+    if ollama.get("model"):
+        settings["model"] = ollama["model"]
+    if ollama.get("timeout_seconds") is not None:
+        settings["timeout_seconds"] = ollama["timeout_seconds"]
+    if classification.get("confidence_threshold") is not None:
+        settings["confidence_threshold"] = classification["confidence_threshold"]
+    if classification.get("body_excerpt_chars") is not None:
+        settings["body_excerpt_chars"] = classification["body_excerpt_chars"]
     return settings
+
+
+def _set_scalar(text: str, key: str, value, quote: bool = False) -> tuple[str, bool]:
+    """Replace the value of a unique ``key:`` line, preserving indentation.
+
+    Returns the updated text and whether a replacement was made.
+    """
+    rendered = f'"{value}"' if quote else str(value)
+    pattern = re.compile(rf"^(?P<indent>\s*){re.escape(key)}:.*$", re.MULTILINE)
+
+    def repl(match: re.Match) -> str:
+        return f"{match.group('indent')}{key}: {rendered}"
+
+    new_text, count = pattern.subn(repl, text, count=1)
+    return new_text, count > 0
+
+
+def _insert_timeout(text: str, timeout: int) -> str:
+    """Add a ``timeout_seconds`` line under the Ollama ``model`` line.
+
+    Fallback for configs that predate the timeout setting.
+    """
+    pattern = re.compile(r"^(?P<indent>\s*)model:.*$", re.MULTILINE)
+    match = pattern.search(text)
+    if not match:
+        return text
+    indent = match.group("indent")
+    addition = f"{match.group(0)}\n{indent}timeout_seconds: {timeout}"
+    return text[: match.start()] + addition + text[match.end() :]
 
 
 def check_credentials() -> None:
